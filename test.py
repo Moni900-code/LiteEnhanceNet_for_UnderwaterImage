@@ -104,12 +104,12 @@ if __name__ == '__main__':
     models = "./snapshots/model_epoch_" + str(99) + ".ckpt"
     parser = argparse.ArgumentParser()
     parser.add_argument('--snapshot_path', type=str, default=models, help='one')
-    parser.add_argument('--test_images_path', type=str, default="./data/raw/", help='path of input images(underwater images) for testing default:./data/input/')
+    parser.add_argument('--test_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of input images(underwater images) for testing default:./data/input/')
     parser.add_argument('--output_images_path', type=str, default='./data/output/', help='path to save generated image.')
     parser.add_argument('--batch_size', type=int, default=1, help="default : 1")
     parser.add_argument('--resize', type=int, default=256, help="resize images, default:resize images to 256*256")
     parser.add_argument('--calculate_metrics', type=bool, default=False, help="calculate PSNR, SSIM and UIQM on test images")
-    parser.add_argument('--label_images_path', type=str, default="./data/label/", help='path of label images(clear images) default:./data/label/')
+    parser.add_argument('--label_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainB/", help='path of label images(clear images) default:./data/label/')
 
     print("-------------------testing---------------------")
     config = parser.parse_args()
@@ -121,7 +121,7 @@ if __name__ == '__main__':
     print("total testing time", time.time() - start_time) ## more images for PFS test
     # ### 以下是做测试
     GEN_im_dir = "./data/output/"
-    GTr_im_dir = "./data/GT/"
+    GTr_im_dir = "/content/euvp-dataset/EUVP/Paired/underwater_dark/validation/"
     gen_uqims = measure_UIQMs(GEN_im_dir)
     print("Generated UQIM >> Mean: {0} std: {1}".format(np.mean(gen_uqims), np.std(gen_uqims)))
     ### compute SSIM and PSNR
