@@ -3,7 +3,7 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 from torch.nn import Module
 import torchvision
 from torchvision import transforms
-
+import configparser
 import wandb
 import argparse
 from dataclasses import dataclass
@@ -13,6 +13,7 @@ from dataloader import myDataSet
 from metrics_calculation import *
 from model import *
 from combined_loss import *
+
 
 __all__ = [
     "Trainer",
@@ -121,7 +122,7 @@ def setup(config):
     model = Mynet().to(config["device"])
 
     transform = transforms.Compose([transforms.Resize((config.resize,config.resize)),transforms.ToTensor()])
-    train_dataset = myDataSet(config.input_images_path,config.label_images_path,transform, True)
+    train_dataset = myDataSet(config.raw_images_path,config.label_images_path,transform, True)
     train_dataloader = torch.utils.data.DataLoader(train_dataset,batch_size = config.train_batch_size,shuffle = False)
     print("Train Dataset Reading Completed.")
     print(model)
@@ -136,7 +137,6 @@ def setup(config):
         print("Test Dataset Reading Completed.")
         return train_dataloader, test_dataloader, model, trainer
     return train_dataloader, None, model, trainer
-
 
 def training(config):
     # Logging using wandb
@@ -153,18 +153,18 @@ def training(config):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    # Input Parameters
-    parser.add_argument('--input_images_path', type=str, default="./data/input/", help='path of input images(underwater images) default:./data/input/')
-    parser.add_argument('--label_images_path', type=str, default="./data/label/", help='path of label images(clear images) default:./data/label/')
-    parser.add_argument('--test_images_path', type=str, default="./data/input/", help='path of input images(underwater images) for testing default:./data/input/')
-    # parser.add_argument('--GTr_test_images_path', type = str, default="./data/input/", help='path of input ground truth images(underwater images) for testing default:./data/input/') ## 这个会不会应该是label？？
-    parser.add_argument('--GTr_test_images_path', type = str, default="./data/input/", help='path of input ground truth images(underwater images) for testing default:./data/input/') ## 这个会不会应该是label？？
+    # raw Parameters
+    parser.add_argument('--raw_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) default:./data/raw/')
+    parser.add_argument('--label_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainB/", help='path of GT images(clear images) default:./data/GT/')
+    parser.add_argument('--test_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) for testing default:./data/raw/')
+    # parser.add_argument('--GTr_test_images_path', type = str, default="./data/raw/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
+    parser.add_argument('--GTr_test_images_path', type = str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/validation/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
     parser.add_argument('--test', default=True)
     parser.add_argument('--lr', type=float, default=0.0002)
     parser.add_argument('--step_size',type=int,default=50,help="Period of learning rate decay") #
-    parser.add_argument('--num_epochs', type=int, default=200)  ##
-    parser.add_argument('--train_batch_size', type=int, default=8,help="default : 1")
-    parser.add_argument('--test_batch_size', type=int, default=8,help="default : 1")
+    parser.add_argument('--num_epochs', type=int, default=50)  ##
+    parser.add_argument('--train_batch_size', type=int, default=16,help="default : 1")
+    parser.add_argument('--test_batch_size', type=int, default=16,help="default : 1")
     parser.add_argument('--resize', type=int, default=256,help="resize images, default:resize images to 256*256") ## 对图像做了归一化
     parser.add_argument('--cuda_id', type=int, default=0,help="id of cuda device,default:0")
     parser.add_argument('--print_freq', type=int, default=1)    
@@ -173,6 +173,8 @@ if __name__ == "__main__":
     parser.add_argument('--output_images_path', type=str, default="./data/output/")
     # parser.add_argument('--num_layers', type=int, default=3) ##
     parser.add_argument('--eval_steps', type=int, default=1)
+
+    
 
     config = parser.parse_args()
     if not os.path.exists(config.snapshots_folder):
