@@ -139,16 +139,20 @@ def setup(config):
     return train_dataloader, None, model, trainer
 
 def training(config):
-    # Logging using wandb
-    wandb.init(project = "underwater_image_enhancement_UWNet")
+    # Logging using wandb in offline mode
+    import os
+    os.environ["WANDB_MODE"] = "offline"  
+
+    wandb.init(project = "underwater_image_enhancement_UWNet", mode="offline")
     wandb.config.update(config, allow_val_change = True)
     config = wandb.config
 
     ds_train, ds_test, model, trainer = setup(config)
-    trainer.train(ds_train, config,ds_test)
+    trainer.train(ds_train, config, ds_test)
     print("==================")
     print("Training complete!")
     print("==================")
+
 
 if __name__ == "__main__":
 
