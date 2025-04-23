@@ -158,11 +158,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     # raw Parameters
-    parser.add_argument('--raw_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) default:./data/raw/')
-    parser.add_argument('--label_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainB/", help='path of GT images(clear images) default:./data/GT/')
-    parser.add_argument('--test_images_path', type=str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) for testing default:./data/raw/')
+    parser.add_argument('--raw_images_path', type=str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) default:./data/raw/')
+    parser.add_argument('--label_images_path', type=str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainB/", help='path of GT images(clear images) default:./data/GT/')
+    parser.add_argument('--test_images_path', type=str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) for testing default:./data/raw/')
     # parser.add_argument('--GTr_test_images_path', type = str, default="./data/raw/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
-    parser.add_argument('--GTr_test_images_path', type = str, default="/content/euvp-dataset/EUVP/Paired/underwater_dark/validation/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
+    parser.add_argument('--GTr_test_images_path', type = str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/validation/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
     parser.add_argument('--test', default=True)
     parser.add_argument('--lr', type=float, default=0.0002)
     parser.add_argument('--step_size',type=int,default=50,help="Period of learning rate decay") #
