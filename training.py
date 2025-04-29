@@ -101,7 +101,7 @@ def setup(config):
         transforms.ToTensor()
     ])
 
-    train_dataset = myDataSet(config.raw_images_path, config.label_images_path, transform, train=True)
+    train_dataset = myDataSet(config.raw_images_path, config.clear_image_path, transform, is_train=True)
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=config.train_batch_size, shuffle=False)
     print("Train Dataset Reading Completed.")
     print(model)
@@ -111,7 +111,7 @@ def setup(config):
     trainer = Trainer(model, opt, loss)
 
     if config.test:
-        test_dataset = myDataSet(config.test_images_path, None, transform, train=False)
+        test_dataset = myDataSet(config.test_images_path, None, transform, is_train=False)
         test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=config.test_batch_size, shuffle=False)
         print("Test Dataset Reading Completed.")
         return train_dataloader, test_dataloader, model, trainer
@@ -132,7 +132,7 @@ if __name__ == '__main__':
     from argparse import Namespace
     config = Namespace(
         raw_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/",
-        label_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainB/",
+        clear_image_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainB/",
         test_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/",
         GTr_test_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/validation/",
         test = True,
@@ -150,5 +150,3 @@ if __name__ == '__main__':
         eval_steps = 1
     )
     main(config)
-
-
