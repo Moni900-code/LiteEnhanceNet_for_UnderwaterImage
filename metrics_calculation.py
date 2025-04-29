@@ -21,7 +21,7 @@ def calculate_metrics_ssim_psnr(generated_image_path, ground_truth_image_path, r
         gt_img = gt_files_map.get(gen_img_lower)
 
         if not gt_img:
-            print(f"Warning: Ground truth image not found for {gen_img}, skipping...")
+            print(f"GT image not found for {gen_img}, skip")
             continue
 
         generated_image_file = os.path.join(generated_image_path, gen_img)
