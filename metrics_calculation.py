@@ -1,48 +1,35 @@
-# -*- coding: utf-8 -*-
-import os
-import cv2
-import numpy as np
-from skimage.metrics import structural_similarity, peak_signal_noise_ratio
-from uiqm_utils import getUIQM
-
 def calculate_metrics_ssim_psnr(generated_image_path, ground_truth_image_path, resize_size=(256, 256)):
     """
     Calculate SSIM and PSNR metrics between generated and ground truth images.
-    
-    Args:
-        generated_image_path (str): Path to directory containing generated images.
-        ground_truth_image_path (str): Path to directory containing ground truth images.
-        resize_size (tuple): Target size for resizing images (width, height).
-    
-    Returns:
-        np.array: Array of SSIM scores.
-        np.array: Array of PSNR scores.
     """
-    # Validate directory paths
     if not os.path.exists(generated_image_path):
         print(f"Error: Generated images path does not exist: {generated_image_path}")
         return np.array([]), np.array([])
+
     if not os.path.exists(ground_truth_image_path):
         print(f"Error: Ground truth images path does not exist: {ground_truth_image_path}")
         return np.array([]), np.array([])
 
+    # Map of lowercase filenames to original filenames in ground truth folder
+    gt_files_map = {f.lower(): f for f in os.listdir(ground_truth_image_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))}
     generated_image_list = [f for f in os.listdir(generated_image_path) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
     error_list_ssim, error_list_psnr = [], []
 
-    for img in generated_image_list:
-        generated_image_file = os.path.join(generated_image_path, img)
-        ground_truth_image_file = os.path.join(ground_truth_image_path, img)  # Assumes same filename
+    for gen_img in generated_image_list:
+        gen_img_lower = gen_img.lower()
+        gt_img = gt_files_map.get(gen_img_lower)
 
-        # Check if ground truth image exists
-        if not os.path.exists(ground_truth_image_file):
-            print(f"Warning: Ground truth image not found for {img}, skipping...")
+        if not gt_img:
+            print(f"Warning: Ground truth image not found for {gen_img}, skipping...")
             continue
 
-        # Read images
+        generated_image_file = os.path.join(generated_image_path, gen_img)
+        ground_truth_image_file = os.path.join(ground_truth_image_path, gt_img)
+
         generated_image = cv2.imread(generated_image_file)
         ground_truth_image = cv2.imread(ground_truth_image_file)
 
-        # Check if images were loaded successfully
         if generated_image is None:
             print(f"Error: Failed to load generated image: {generated_image_file}")
             continue
@@ -50,38 +37,34 @@ def calculate_metrics_ssim_psnr(generated_image_path, ground_truth_image_path, r
             print(f"Error: Failed to load ground truth image: {ground_truth_image_file}")
             continue
 
-        # Resize images
         try:
             generated_image = cv2.resize(generated_image, resize_size)
             ground_truth_image = cv2.resize(ground_truth_image, resize_size)
         except cv2.error as e:
-            print(f"Error resizing images for {img}: {e}")
+            print(f"Error resizing images for {gen_img}: {e}")
             continue
 
-        # Calculate SSIM (multichannel for color images)
         try:
             error_ssim, _ = structural_similarity(
                 generated_image,
                 ground_truth_image,
                 full=True,
                 multichannel=True,
-                channel_axis=2  # Specify channel axis for color images
+                channel_axis=2
             )
             error_list_ssim.append(error_ssim)
         except ValueError as e:
-            print(f"Error calculating SSIM for {img}: {e}")
+            print(f"Error calculating SSIM for {gen_img}: {e}")
             continue
 
-        # Convert to grayscale for PSNR
         generated_image_gray = cv2.cvtColor(generated_image, cv2.COLOR_BGR2GRAY)
         ground_truth_image_gray = cv2.cvtColor(ground_truth_image, cv2.COLOR_BGR2GRAY)
 
-        # Calculate PSNR
         try:
             error_psnr = peak_signal_noise_ratio(generated_image_gray, ground_truth_image_gray)
             error_list_psnr.append(error_psnr)
         except ValueError as e:
-            print(f"Error calculating PSNR for {img}: {e}")
+            print(f"Error calculating PSNR for {gen_img}: {e}")
             continue
 
     if not error_list_ssim or not error_list_psnr:
@@ -89,6 +72,7 @@ def calculate_metrics_ssim_psnr(generated_image_path, ground_truth_image_path, r
         return np.array([]), np.array([])
 
     return np.array(error_list_ssim), np.array(error_list_psnr)
+
 
 def calculate_UIQM(image_path, resize_size=(256, 256)):
     """
