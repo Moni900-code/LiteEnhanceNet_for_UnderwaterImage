@@ -75,10 +75,10 @@ class Trainer:
                 UIQM, SSIM, PSNR = self.eval(config, test_dataloader, self.model)
                 print(f"Evaluation at Epoch [{epoch+1}] - UIQM: {np.mean(UIQM):.4f}, SSIM: {np.mean(SSIM):.4f}, PSNR: {np.mean(PSNR):.4f}")
     
-            # Save model
+            # Save model as .pth
             if epoch % config.snapshot_freq == 0:
                 os.makedirs(config.snapshots_folder, exist_ok=True)
-                torch.save(self.model, os.path.join(config.snapshots_folder, f'model_epoch_{epoch}.ckpt'))
+                torch.save(self.model.state_dict(), os.path.join(config.snapshots_folder, f'model_epoch_{epoch}.pth'))
 
 
     @torch.no_grad()
