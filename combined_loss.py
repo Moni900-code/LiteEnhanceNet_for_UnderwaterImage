@@ -17,8 +17,8 @@ class combinedloss(nn.Module):
         self.vggloss = VGG_loss(vgg, config)
         for param in self.vggloss.parameters():
             param.requires_grad = False
-        self.mseloss = nn.MSELoss().to(config['device'])
-        self.l1loss = nn.L1Loss().to(config['device'])
+        self.mseloss = nn.MSELoss().to(config.device)
+        self.l1loss = nn.L1Loss().to(config.device)
         # self.l1loss = nn.L().to(config['device'])
 
     def forward(self, out, label):
