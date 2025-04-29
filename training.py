@@ -1,29 +1,24 @@
 import os
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+
+import torch
 from torch.nn import Module
 import torchvision
 from torchvision import transforms
-import configparser
-import wandb
 import argparse
 from dataclasses import dataclass
 from tqdm.autonotebook import tqdm, trange
-from dataloader import myDataSet
 
+from dataloader import myDataSet
 from metrics_calculation import *
 from model import *
 from combined_loss import *
-
 
 __all__ = [
     "Trainer",
     "setup",
     "training",
 ]
-
-## TODO: Update config parameter names
-## TODO: remove wandb steps
-## TODO: Add comments to functions
 
 @dataclass
 class Trainer:
@@ -32,98 +27,82 @@ class Trainer:
     loss: Module
 
     @torch.enable_grad()
-    def train(self, train_dataloader, config, test_dataloader = None):
-        device = config['device']
-        primary_loss_lst = [] ## 这个对应的是MSE loss
+    def train(self, train_dataloader, config, test_dataloader=None):
+        device = config.device
+        primary_loss_lst = []
         vgg_loss_lst = []
         total_loss_lst = []
 
-        UIQM, SSIM, PSNR = self.eval(config, test_dataloader, self.model)
-        wandb.log({f"[Test] Epoch": 0,
-                   "[Test] UIQM": np.mean(UIQM),
-                   "[Test] SSIM": np.mean(SSIM),
-                    "[Test] PSNR": np.mean(PSNR), },
-                   commit=True
-                   )
+        # Initial evaluation before training
+        if config.test and test_dataloader is not None:
+            UIQM, SSIM, PSNR = self.eval(config, test_dataloader, self.model)
+            print(f"Epoch [0] - UIQM: {np.mean(UIQM):.4f}, SSIM: {np.mean(SSIM):.4f}, PSNR: {np.mean(PSNR):.4f}")
 
-        for epoch in trange(0,config.num_epochs,desc = f"[Full Loop]", leave = False):
-            primary_loss_tmp = 0 ## 给出个初始值
-            vgg_loss_tmp = 0
-            total_loss_tmp = 0
+        for epoch in trange(0, config.num_epochs, desc="[Full Loop]", leave=False):
+            primary_loss_tmp, vgg_loss_tmp, total_loss_tmp = 0, 0, 0
 
+            # Learning rate decay
             if epoch > 1 and epoch % config.step_size == 0:
                 for param_group in self.opt.param_groups:
-                    param_group['lr'] = param_group['lr']*0.7
+                    param_group['lr'] *= 0.7
 
-            for inp, label, _ in tqdm(train_dataloader, desc = f"[Train]", leave = False):
-                inp = inp.to(device)
-                label = label.to(device)
+            for inp, label, _ in tqdm(train_dataloader, desc=f"[Train Epoch {epoch}]", leave=False):
+                inp, label = inp.to(device), label.to(device)
 
                 self.model.train()
-
                 self.opt.zero_grad()
                 out = self.model(inp)
                 loss, mse_loss, vgg_loss = self.loss(out, label)
 
                 loss.backward()
                 self.opt.step()
+
                 primary_loss_tmp += mse_loss.item()
                 vgg_loss_tmp += vgg_loss.item()
                 total_loss_tmp += loss.item()
 
-            total_loss_lst.append(total_loss_tmp/len(train_dataloader))
-            vgg_loss_lst.append(vgg_loss_tmp/len(train_dataloader))
-            primary_loss_lst.append(primary_loss_tmp/len(train_dataloader))
-            wandb.log({f"[Train] Total Loss" : total_loss_lst[epoch],
-                       "[Train] Primary Loss" : primary_loss_lst[epoch],
-                       "[Train] VGG Loss" : vgg_loss_lst[epoch],},
-                      commit = True
-                      )
+            total_loss_lst.append(total_loss_tmp / len(train_dataloader))
+            vgg_loss_lst.append(vgg_loss_tmp / len(train_dataloader))
+            primary_loss_lst.append(primary_loss_tmp / len(train_dataloader))
 
-            if (config.test == True) & (epoch % config.eval_steps == 0):
-                UIQM, SSIM, PSNR = self.eval(config, test_dataloader, self.model)
-                wandb.log({f"[Test] Epoch": epoch+1,
-                           "[Test] UIQM" : np.mean(UIQM),
-                           "[Test] SSIM" : np.mean(SSIM),
-                           "[Test] PSNR" : np.mean(PSNR),},
-                          commit = True
-                          )
-
+            # Print loss
             if epoch % config.print_freq == 0:
-                print('epoch:[{}]/[{}], image loss:{}, MSE / L1 loss:{}, VGG loss:{}'.format(epoch,config.num_epochs,str(total_loss_lst[epoch]),str(primary_loss_lst[epoch]),str(vgg_loss_lst[epoch])))
-                # wandb.log()
+                print(f"Epoch [{epoch}/{config.num_epochs}] - Total Loss: {total_loss_lst[-1]:.4f}, Primary Loss: {primary_loss_lst[-1]:.4f}, VGG Loss: {vgg_loss_lst[-1]:.4f}")
 
-            if not os.path.exists(config.snapshots_folder):
-                os.mkdir(config.snapshots_folder)
+            # Evaluation
+            if config.test and epoch % config.eval_steps == 0 and test_dataloader is not None:
+                UIQM, SSIM, PSNR = self.eval(config, test_dataloader, self.model)
+                print(f"Evaluation at Epoch [{epoch+1}] - UIQM: {np.mean(UIQM):.4f}, SSIM: {np.mean(SSIM):.4f}, PSNR: {np.mean(PSNR):.4f}")
 
+            # Saving model
             if epoch % config.snapshot_freq == 0:
-                torch.save(self.model, config.snapshots_folder + 'model_epoch_{}.ckpt'.format(epoch))
+                os.makedirs(config.snapshots_folder, exist_ok=True)
+                save_path = os.path.join(config.snapshots_folder, f'model_epoch_{epoch}.ckpt')
+                torch.save(self.model, save_path)
 
     @torch.no_grad()
     def eval(self, config, test_dataloader, test_model):
         test_model.eval()
-        for i, (img, _, name) in enumerate(test_dataloader):
-            with torch.no_grad():
-                img = img.to(config.device)
-                # generate_img = test_model(img).to(config["device"])
-                generate_img = test_model(img) # 原来的
-                torchvision.utils.save_image(generate_img, config.output_images_path + name[0])
-        SSIM_measures, PSNR_measures = calculate_metrics_ssim_psnr(config.output_images_path,config.GTr_test_images_path)
+        for img, _, name in test_dataloader:
+            img = img.to(config.device)
+            output = test_model(img)
+            torchvision.utils.save_image(output, os.path.join(config.output_images_path, name[0]))
+
+        SSIM_measures, PSNR_measures = calculate_metrics_ssim_psnr(config.output_images_path, config.GTr_test_images_path)
         UIQM_measures = calculate_UIQM(config.output_images_path)
         return UIQM_measures, SSIM_measures, PSNR_measures
 
 def setup(config):
-    if torch.cuda.is_available():
-        config.device = "cuda"
-    else:
-        config.device = "cpu"
+    config.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # model = UWnet(num_layers=config.num_layers).to(config["device"])  ## 这里设置了层数
-    model = Mynet().to(config["device"])
+    model = Mynet().to(config.device)
+    transform = transforms.Compose([
+        transforms.Resize((config.resize, config.resize)),
+        transforms.ToTensor()
+    ])
 
-    transform = transforms.Compose([transforms.Resize((config.resize,config.resize)),transforms.ToTensor()])
-    train_dataset = myDataSet(config.raw_images_path,config.label_images_path,transform, True)
-    train_dataloader = torch.utils.data.DataLoader(train_dataset,batch_size = config.train_batch_size,shuffle = False)
+    train_dataset = myDataSet(config.raw_images_path, config.label_images_path, transform, train=True)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=config.train_batch_size, shuffle=False)
     print("Train Dataset Reading Completed.")
     print(model)
 
@@ -132,58 +111,44 @@ def setup(config):
     trainer = Trainer(model, opt, loss)
 
     if config.test:
-        test_dataset = myDataSet(config.test_images_path, None, transform, False)
+        test_dataset = myDataSet(config.test_images_path, None, transform, train=False)
         test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=config.test_batch_size, shuffle=False)
         print("Test Dataset Reading Completed.")
         return train_dataloader, test_dataloader, model, trainer
+
     return train_dataloader, None, model, trainer
 
 def training(config):
-    # Logging using wandb in offline mode
-    import os
-    os.environ["WANDB_MODE"] = "offline"  
-
-    wandb.init(project = "underwater_image_enhancement_UWNet", mode="offline")
-    wandb.config.update(config, allow_val_change = True)
-    config = wandb.config
-
-    ds_train, ds_test, model, trainer = setup(config)
-    trainer.train(ds_train, config, ds_test)
+    train_loader, test_loader, model, trainer = setup(config)
+    trainer.train(train_loader, config, test_loader)
     print("==================")
     print("Training complete!")
     print("==================")
 
-
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser()
-    # raw Parameters
-    parser.add_argument('--raw_images_path', type=str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) default:./data/raw/')
-    parser.add_argument('--label_images_path', type=str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainB/", help='path of GT images(clear images) default:./data/GT/')
-    parser.add_argument('--test_images_path', type=str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/", help='path of raw images(underwater images) for testing default:./data/raw/')
-    # parser.add_argument('--GTr_test_images_path', type = str, default="./data/raw/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
-    parser.add_argument('--GTr_test_images_path', type = str, default="/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/validation/", help='path of raw ground truth images(underwater images) for testing default:./data/raw/') ## 这个会不会应该是label？？
-    parser.add_argument('--test', default=True)
-    parser.add_argument('--lr', type=float, default=0.0002)
-    parser.add_argument('--step_size',type=int,default=50,help="Period of learning rate decay") #
-    parser.add_argument('--num_epochs', type=int, default=50)  ##
-    parser.add_argument('--train_batch_size', type=int, default=16,help="default : 1")
-    parser.add_argument('--test_batch_size', type=int, default=16,help="default : 1")
-    parser.add_argument('--resize', type=int, default=256,help="resize images, default:resize images to 256*256") ## 对图像做了归一化
-    parser.add_argument('--cuda_id', type=int, default=0,help="id of cuda device,default:0")
-    parser.add_argument('--print_freq', type=int, default=1)    
-    parser.add_argument('--snapshot_freq', type=int, default=2)
-    parser.add_argument('--snapshots_folder', type=str, default="./snapshots/")
-    parser.add_argument('--output_images_path', type=str, default="./data/output/")
-    # parser.add_argument('--num_layers', type=int, default=3) ##
-    parser.add_argument('--eval_steps', type=int, default=1)
-
-    
-
-    config = parser.parse_args()
-    if not os.path.exists(config.snapshots_folder):
-        os.mkdir(config.snapshots_folder)
-    if not os.path.exists(config.output_images_path):
-        os.mkdir(config.output_images_path)
+def main(config):
     training(config)
+
+if __name__ == '__main__':
+    from argparse import Namespace
+    config = Namespace(
+        raw_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/",
+        label_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainB/",
+        test_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/",
+        GTr_test_images_path = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/validation/",
+        test = True,
+        lr = 0.0002,
+        step_size = 50,
+        num_epochs = 50,
+        train_batch_size = 16,
+        test_batch_size = 16,
+        resize = 256,
+        cuda_id = 0,
+        print_freq = 1,
+        snapshot_freq = 2,
+        snapshots_folder = "./snapshots/",
+        output_images_path = "./data/output/",
+        eval_steps = 1
+    )
+    main(config)
+
 
