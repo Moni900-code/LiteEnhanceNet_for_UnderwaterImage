@@ -82,7 +82,9 @@ class Trainer:
 
     @torch.no_grad()
     def eval(self, config, test_dataloader, test_model):
-        test_model.eval()
+        test_model.eval() 
+        os.makedirs(config.output_images_path, exist_ok=True)
+
         for img, _, name in test_dataloader:
             img = img.to(config.device)
             output = test_model(img)
