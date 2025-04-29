@@ -122,7 +122,7 @@ if __name__ == '__main__':
     print("total testing time", time.time() - start_time) ## more images for PFS test
     # ### 以下是做测试
     GEN_im_dir = "./data/output/"
-    GTr_im_dir = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/validation/"
+    GTr_im_dir = "/kaggle/input/euvp-dataset/EUVP/Paired/underwater_dark/trainA/"
     gen_uqims = measure_UIQMs(GEN_im_dir)
     print("Generated UQIM >> Mean: {0} std: {1}".format(np.mean(gen_uqims), np.std(gen_uqims)))
     ### compute SSIM and PSNR
