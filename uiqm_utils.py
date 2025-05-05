@@ -56,7 +56,11 @@ def sobel(x):
     dx = ndimage.sobel(x, 0)
     dy = ndimage.sobel(x, 1)
     mag = np.hypot(dx, dy)
-    mag *= 255.0 / np.max(mag)
+   
+    if np.max(mag) > 0:
+      mag *= 255.0 / np.max(mag)
+    else:
+      mag = np.zeros_like(mag) 
     return mag
 
 
