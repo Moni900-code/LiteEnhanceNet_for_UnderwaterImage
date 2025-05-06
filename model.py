@@ -1,14 +1,10 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-def swish(x):
-    return x * x.sigmoid()
-
-def hard_sigmoid(x, inplace=False):
-    return nn.ReLU6(inplace=inplace)(x + 3) / 6
-
-def hard_swish(x, inplace=False):
-    return x * hard_sigmoid(x, inplace)
+# Utility Functions
+def gelu(x):
+    return x * torch.sigmoid(1.702 * x)  # Approximation of GELU
 
 class HardSigmoid(nn.Module):
     def __init__(self, inplace=False):
@@ -16,130 +12,116 @@ class HardSigmoid(nn.Module):
         self.inplace = inplace
 
     def forward(self, x):
-        return hard_sigmoid(x, inplace=self.inplace)
+        return F.relu6(x + 3, inplace=self.inplace) / 6
 
-class HardSwish(nn.Module):
-    def __init__(self, inplace=False):
-        super(HardSwish, self).__init__()
-        self.inplace = inplace
-
-    def forward(self, x):
-        return hard_swish(x, inplace=self.inplace)
-
-def _make_divisible(v, divisor=8, min_value=None):  ## 将通道数变成8的整数倍
-    """
-    This function is taken from the original tf repo.
-    It ensures that all layers have a channel number that is divisible by 8
-    It can be seen here:
-    https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
-    :param v:
-    :param divisor:
-    :param min_value:
-    :return:
-    """
-    if min_value is None:
-        min_value = divisor
-    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-    # Make sure that round down does not go down by more than 10%.
-    if new_v < 0.9 * v:
-        new_v += divisor
-    return new_v
-
-
-class SELayer(nn.Module):
-    def __init__(self, inp, oup, reduction=4):
-        super(SELayer, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-                nn.Conv2d(oup, _make_divisible(inp // reduction), 1, 1, 0,),
-                nn.ReLU(),
-                nn.Conv2d(_make_divisible(inp // reduction), oup, 1, 1, 0),
-                HardSigmoid()
+class CBAM(nn.Module):
+    """Convolutional Block Attention Module (CBAM)"""
+    def __init__(self, in_channels, reduction=16):
+        super(CBAM, self).__init__()
+        self.channel_gate = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(in_channels, in_channels // reduction, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels // reduction, in_channels, 1, bias=False),
+            HardSigmoid(inplace=True)
         )
+        self.spatial_gate = nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False)
 
     def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
+        # Channel attention
+        channel_attn = self.channel_gate(x)
+        x = x * channel_attn
+        # Spatial attention
+        max_pool = torch.max(x, dim=1, keepdim=True)[0]
+        avg_pool = torch.mean(x, dim=1, keepdim=True)
+        spatial_attn = torch.sigmoid(self.spatial_gate(torch.cat([max_pool, avg_pool], dim=1)))
+        x = x * spatial_attn
+        return x
 
-class ConvBlock1(nn.Module):
-    def __init__(self):
-        super(ConvBlock1, self).__init__()
-        self.DW = nn.Conv2d(in_channels=16, out_channels=16, kernel_size=3, stride=1, groups=16, padding=1, bias=False)
-        self.BN = nn.BatchNorm2d(16)
-        self.HS = HardSwish()
-        self.PW = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=1, stride=1, padding=0, bias=False)
-        self.BNN = nn.BatchNorm2d(32)
-
-    def forward(self, x):
-        a = self.HS(self.BN(self.DW(x)))
-        a = self.HS(self.BNN(self.PW(a)))
-        return a
-
-class ConvBlock2(nn.Module):
-    def __init__(self):
-        super(ConvBlock2, self).__init__()
-        self.DW = nn.Conv2d(in_channels=32, out_channels=32, kernel_size=3, stride=1, groups=32, padding=1, bias=False)
-        self.BN = nn.BatchNorm2d(32)
-        self.HS = HardSwish()
-        self.PW = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=1, stride=1, padding=0, bias=False)
-        self.BNN = nn.BatchNorm2d(64)
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, groups=1, use_cbam=True):
+        super(ConvBlock, self).__init__()
+        self.conv = nn.Conv2d(
+            in_channels, out_channels, kernel_size, stride, kernel_size // 2, groups=groups, bias=False
+        )
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.gelu = nn.GELU()
+        self.cbam = CBAM(out_channels) if use_cbam else nn.Identity()
 
     def forward(self, x):
-        a = self.HS(self.BN(self.DW(x)))
-        a = self.HS(self.BNN(self.PW(a)))
-        return a
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.gelu(x)
+        x = self.cbam(x)
+        return x
 
-class ConvBlock3(nn.Module):
-    def __init__(self):
-        super(ConvBlock3, self).__init__()
-        self.DW = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, groups=64, padding=1, bias=False)
-        self.BN = nn.BatchNorm2d(64)
-        self.HS = HardSwish()
-        self.PW = nn.Conv2d(in_channels=64, out_channels=32, kernel_size=1, stride=1, padding=0, bias=False)
-        self.BNN = nn.BatchNorm2d(32)
-
-    def forward(self, x):
-        a = self.HS(self.BN(self.DW(x)))
-        a = self.HS(self.BNN(self.PW(a)))
-        return a
-
-class ConvBlock4(nn.Module):
-    def __init__(self):
-        super(ConvBlock4, self).__init__()
-        self.DW = nn.Conv2d(in_channels=80, out_channels=80, kernel_size=3, stride=1, groups=80, padding=1, bias=False)
-        self.BN = nn.BatchNorm2d(80)
-        self.HS = HardSwish()
-        self.PW = nn.Conv2d(in_channels=80, out_channels=32, kernel_size=1, stride=1, padding=0, bias=False)
-        self.BNN = nn.BatchNorm2d(32)
-        self.SE = SELayer(80, 80)
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = ConvBlock(in_channels, out_channels, stride=stride)
+        self.conv2 = ConvBlock(out_channels, out_channels, groups=out_channels)  # Depthwise
+        self.conv3 = nn.Conv2d(out_channels, out_channels, 1, bias=False)  # Pointwise
+        self.bn3 = nn.BatchNorm2d(out_channels)
+        self.shortcut = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, 1, stride=stride, bias=False),
+            nn.BatchNorm2d(out_channels)
+        ) if in_channels != out_channels or stride != 1 else nn.Identity()
 
     def forward(self, x):
+        residual = x
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.bn3(x)
+        x = x + self.shortcut(residual)
+        x = F.gelu(x)
+        return x
 
-        a = self.HS(self.BN(self.DW(x)))
-        a = self.SE(a)
-        a = self.HS(self.BNN(self.PW(a)))
-        return a
+class EnhancedUnderwaterNet(nn.Module):
+    def __init__(self, num_classes=3):
+        super(EnhancedUnderwaterNet, self).__init__()
+        self.input_conv = ConvBlock(3, 32, kernel_size=3, stride=1)
 
-class Mynet(nn.Module):
-    def __init__(self, num_layers=3):
-        super(Mynet, self).__init__()
-        self.input = nn.Conv2d(in_channels=3, out_channels=16, kernel_size=1, stride=1, padding=0, bias=False)  ## 第一层卷积
-        self.output = nn.Conv2d(in_channels=32, out_channels=3, kernel_size=1, stride=1, padding=0, bias=False)
-        self.relu = nn.ReLU(inplace=True)
-        self.block1 = ConvBlock1()
-        self.block2 = ConvBlock2()
-        self.block3 = ConvBlock3()
-        self.block4 = ConvBlock4()
+        # Multi-scale feature extraction
+        self.stage1 = ResidualBlock(32, 64, stride=1)
+        self.stage2 = ResidualBlock(64, 128, stride=2)  # Downsample
+        self.stage3 = ResidualBlock(128, 256, stride=2)  # Downsample
+        self.stage4 = ResidualBlock(256, 256, stride=1)
+
+        # Upsampling and feature fusion
+        self.up1 = nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1)
+        self.fuse1 = ConvBlock(256, 128)  # Concat with stage2
+        self.up2 = nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1)
+        self.fuse2 = ConvBlock(128, 64)   # Concat with stage1
+
+        # Output layer
+        self.output = nn.Conv2d(64, num_classes, kernel_size=1, stride=1)
+        self.final_act = nn.Tanh()  # Ensure output is in [-1, 1] for image enhancement
 
     def forward(self, x):
-        x = self.input(x)
-        x1 = self.block1(x)
-        x2 = self.block2(x1)
-        # x2 = torch.cat((x, x2), 1)
-        x3 = self.block3(x2)
-        x3 = torch.cat((x, x1, x3), 1)
-        x4 = self.block4(x3)
-        out = self.output(x4)
-        return out
+        # Encoder
+        x1 = self.input_conv(x)      # 32 channels
+        x2 = self.stage1(x1)         # 64 channels
+        x3 = self.stage2(x2)         # 128 channels, downsampled
+        x4 = self.stage3(x3)         # 256 channels, downsampled
+        x5 = self.stage4(x4)         # 256 channels
+
+        # Decoder with skip connections
+        x = self.up1(x5)             # Upsample to 128 channels
+        x = torch.cat([x, x3], dim=1)  # Skip connection from stage2
+        x = self.fuse1(x)            # Fuse to 128 channels
+        x = self.up2(x)              # Upsample to 64 channels
+        x = torch.cat([x, x2], dim=1)  # Skip connection from stage1
+        x = self.fuse2(x)            # Fuse to 64 channels
+
+        # Output
+        x = self.output(x)
+        x = self.final_act(x)
+        return x
+
+# Example usage
+if __name__ == "__main__":
+    model = EnhancedUnderwaterNet(num_classes=3)
+    x = torch.randn(1, 3, 256, 256)
+    output = model(x)
+    print(output.shape)  # Should be [1, 3, 256, 256]
