@@ -77,9 +77,9 @@ class ResidualBlock(nn.Module):
         x = F.gelu(x)
         return x
 
-class EnhancedUnderwaterNet(nn.Module):
+class Mynet(nn.Module):
     def __init__(self, num_classes=3):
-        super(EnhancedUnderwaterNet, self).__init__()
+        super(Mynet, self).__init__()
         self.input_conv = ConvBlock(3, 32, kernel_size=3, stride=1)
 
         # Multi-scale feature extraction
