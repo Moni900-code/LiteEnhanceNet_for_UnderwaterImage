@@ -5,6 +5,33 @@ from torchsummary import summary
 from ptflops import get_model_complexity_info
 
 # -------------------------
+# CPGB Module
+# -------------------------
+class CPGB(nn.Module):
+    def __init__(self, in_channels, out_channels, reduction_ratio=16):
+        super(CPGB, self).__init__()
+        self.mlp = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels * reduction_ratio, kernel_size=1, stride=1, bias=False),
+            nn.ReLU(),
+            nn.Conv2d(in_channels * reduction_ratio, in_channels, kernel_size=1, stride=1, bias=False),
+            nn.Tanh()
+        )
+        self.rir = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.ReLU(),
+            nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.ReLU()
+        )
+        self.final_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False)
+
+    def forward(self, x):
+        mlp_out = self.mlp(x)
+        mlp_out = mlp_out + x  # Residual connection
+        rir_out = self.rir(mlp_out)
+        prior = self.final_conv(rir_out)
+        return prior
+
+# -------------------------
 # CBAM Module
 # -------------------------
 class CBAM(nn.Module):
@@ -56,13 +83,13 @@ class ConvBlock(nn.Module):
         return x
 
 # -------------------------
-# Lightweight Color Feature Extractor (for color histogram)
+# Lightweight Color Feature Extractor
 # -------------------------
 class ColorFeatureExtractor(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ColorFeatureExtractor, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 8, kernel_size=3, stride=1, padding=1, bias=False),  # channels reduced 16→8
+            nn.Conv2d(in_channels, 8, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(8),
             nn.ReLU()
         )
@@ -82,7 +109,9 @@ class ColorRecoveryModule(nn.Module):
         self.in_channels = in_channels
         self.conv1x1 = nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
 
-    def forward(self, content_features, color_features):
+    def forward(self, content_features, color_features, cpgb_prior=None):
+        if cpgb_prior is not None:
+            color_features = color_features + cpgb_prior  # Combine CPGB prior with color features
         D = -content_features - color_features
         M = content_features * color_features
         L = 2 * torch.sigmoid(D) * torch.tanh(M)
@@ -91,7 +120,7 @@ class ColorRecoveryModule(nn.Module):
         L = torch.clamp(L, 0, 1)
         output_features = []
         current_color = color_features
-        for i in range(2):  # loop reduced from 4 to 2
+        for i in range(2):
             F_i = L * current_color + content_features
             output_features.append(F_i)
             current_color = self.conv1x1(F_i)
@@ -100,7 +129,7 @@ class ColorRecoveryModule(nn.Module):
         return final_output
 
 # -------------------------
-# Mynet with Lightweight CRM
+# Mynet with CPGB
 # -------------------------
 class Mynet(nn.Module):
     def __init__(self):
@@ -113,13 +142,11 @@ class Mynet(nn.Module):
         self.block2 = ConvBlock(32, 64, stride=1)
         self.block3 = ConvBlock(80, 32, stride=1, use_cbam=True)
 
-        # Lightweight color feature extractor with out_channels=32 (as before)
         self.color_extractor = ColorFeatureExtractor(in_channels=3, out_channels=32)
-
-        # CRM with in_channels=32
+        self.cpgb = CPGB(in_channels=3, out_channels=32)  # Added CPGB
         self.crm = ColorRecoveryModule(in_channels=32)
 
-        self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)
+        self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)  # Corrected typo
         self.final_act = nn.Tanh()
 
     def forward(self, x, gt_color_source=None):
@@ -130,6 +157,7 @@ class Mynet(nn.Module):
         """
         color_input = gt_color_source if gt_color_source is not None else x
         color_features = self.color_extractor(color_input)
+        cpgb_prior = self.cpgb(color_input)  # Extract color priors using CPGB
 
         x = self.input(x)
         x = self.bn_input(x)
@@ -141,13 +169,13 @@ class Mynet(nn.Module):
         content_features = self.block3(x)
 
         color_features = F.interpolate(color_features, size=content_features.shape[2:], mode='bilinear', align_corners=False)
+        cpgb_prior = F.interpolate(cpgb_prior, size=content_features.shape[2:], mode='bilinear', align_corners=False)
 
-        x = self.crm(content_features, color_features)
+        x = self.crm(content_features, color_features, cpgb_prior)
 
         x = self.output(x)
         x = self.final_act(x)
         return x
-
 
 # -------------------------
 # Main: Summary + FLOPs
