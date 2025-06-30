@@ -103,7 +103,7 @@ class ColorRecoveryModule(nn.Module):
         output_features = []
         current_color = color_features
         
-        for i in range(4):
+        for i in range(2):
             F_i = L * current_color + content_features
             output_features.append(F_i)
             current_color = self.conv1x1(F_i)
