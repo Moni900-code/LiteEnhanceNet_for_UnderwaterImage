@@ -62,11 +62,11 @@ class ColorFeatureExtractor(nn.Module):
     def __init__(self, in_channels, out_channels):
         super(ColorFeatureExtractor, self).__init__()
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 16, kernel_size=3, stride=1, padding=1, bias=False),  # Reduced channels to 16
-            nn.BatchNorm2d(16),
+            nn.Conv2d(in_channels, 8, kernel_size=3, stride=1, padding=1, bias=False),  # channels reduced 16→8
+            nn.BatchNorm2d(8),
             nn.ReLU()
         )
-        self.decoder = nn.Conv2d(16, out_channels, kernel_size=1, stride=1, bias=False)
+        self.decoder = nn.Conv2d(8, out_channels, kernel_size=1, stride=1, bias=False)
 
     def forward(self, x):
         x = self.encoder(x)
@@ -83,32 +83,19 @@ class ColorRecoveryModule(nn.Module):
         self.conv1x1 = nn.Conv2d(in_channels, in_channels, kernel_size=1, stride=1, padding=0)
 
     def forward(self, content_features, color_features):
-        # Equation (4): D(x, y) = -Con(x,y) - Color(x,y)
         D = -content_features - color_features
-        
-        # Equation (5): M(x,y) = Con(x,y) * Color(x,y)
         M = content_features * color_features
-        
-        # Equation (6): L = 2 * sigmoid(D) * tanh(M)
         L = 2 * torch.sigmoid(D) * torch.tanh(M)
-        
-        # Ensure sigmoid(D) ∈ [0, 0.5]
         sigmoid_D = torch.sigmoid(D)
         sigmoid_D = torch.clamp(sigmoid_D, 0, 0.5)
-        
-        # Ensure L ∈ [0, 1]
         L = torch.clamp(L, 0, 1)
-        
-        # Equation (7): F_i, Color_{i+1} = L_i * Color_i + Con_i for i ∈ [1, 4]
         output_features = []
         current_color = color_features
-        
-        for i in range(2):
+        for i in range(2):  # loop reduced from 4 to 2
             F_i = L * current_color + content_features
             output_features.append(F_i)
             current_color = self.conv1x1(F_i)
             current_color = F.relu(current_color)
-        
         final_output = torch.mean(torch.stack(output_features), dim=0)
         return final_output
 
@@ -121,17 +108,17 @@ class Mynet(nn.Module):
         self.input = nn.Conv2d(3, 16, kernel_size=1, stride=1, bias=False)
         self.bn_input = nn.BatchNorm2d(16)
         self.hs_input = nn.Hardswish()
-        
+
         self.block1 = ConvBlock(16, 32, stride=1)
         self.block2 = ConvBlock(32, 64, stride=1)
         self.block3 = ConvBlock(80, 32, stride=1, use_cbam=True)
-        
-        # Lightweight color feature extractor
+
+        # Lightweight color feature extractor with out_channels=32 (as before)
         self.color_extractor = ColorFeatureExtractor(in_channels=3, out_channels=32)
-        
-        # CRM integration
+
+        # CRM with in_channels=32
         self.crm = ColorRecoveryModule(in_channels=32)
-        
+
         self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)
         self.final_act = nn.Tanh()
 
@@ -141,31 +128,26 @@ class Mynet(nn.Module):
             x (Tensor): degraded input image
             gt_color_source (Tensor or None): GT image to extract color features from (used only during training)
         """
-        # Use GT image to extract color feature if provided, else fallback to degraded input
         color_input = gt_color_source if gt_color_source is not None else x
         color_features = self.color_extractor(color_input)
-        
-        # Initial feature extraction from degraded image
+
         x = self.input(x)
         x = self.bn_input(x)
         x = self.hs_input(x)
-        
-        # Pass through ConvBlocks
+
         x = self.block1(x)
         x = self.block2(x)
-        x = torch.cat([x, torch.zeros_like(x)[:, :16, :, :]], dim=1)  # Pad to 80 channels
-        content_features = self.block3(x)  # Content features
-        
-        # Match resolution
+        x = torch.cat([x, torch.zeros_like(x)[:, :16, :, :]], dim=1)  # pad to 80 channels
+        content_features = self.block3(x)
+
         color_features = F.interpolate(color_features, size=content_features.shape[2:], mode='bilinear', align_corners=False)
-        
-        # Apply CRM
+
         x = self.crm(content_features, color_features)
-        
-        # Final output
+
         x = self.output(x)
         x = self.final_act(x)
         return x
+
 
 # -------------------------
 # Main: Summary + FLOPs
