@@ -5,27 +5,21 @@ from torchsummary import summary
 from ptflops import get_model_complexity_info
 
 # -------------------------
-# Enhanced CPGB Module
+# CPGB Module
 # -------------------------
 class CPGB(nn.Module):
-    def __init__(self, in_channels, out_channels, reduction_ratio=8):
+    def __init__(self, in_channels, out_channels, reduction_ratio=16):
         super(CPGB, self).__init__()
         self.mlp = nn.Sequential(
             nn.Conv2d(in_channels, in_channels * reduction_ratio, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(in_channels * reduction_ratio),
             nn.ReLU(),
-            nn.Conv2d(in_channels * reduction_ratio, in_channels * reduction_ratio // 2, kernel_size=1, stride=1, bias=False),
-            nn.BatchNorm2d(in_channels * reduction_ratio // 2),
-            nn.ReLU(),
-            nn.Conv2d(in_channels * reduction_ratio // 2, in_channels, kernel_size=1, stride=1, bias=False),  # Ensure output matches in_channels
+            nn.Conv2d(in_channels * reduction_ratio, in_channels, kernel_size=1, stride=1, bias=False),
             nn.Tanh()
         )
         self.rir = nn.Sequential(
             nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(in_channels),
             nn.ReLU(),
             nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(in_channels),
             nn.ReLU()
         )
         self.final_conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, bias=False)
@@ -89,7 +83,25 @@ class ConvBlock(nn.Module):
         return x
 
 # -------------------------
-# Enhanced Color Recovery Module (CRM)
+# Lightweight Color Feature Extractor
+# -------------------------
+class ColorFeatureExtractor(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ColorFeatureExtractor, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 8, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(8),
+            nn.ReLU()
+        )
+        self.decoder = nn.Conv2d(8, out_channels, kernel_size=1, stride=1, bias=False)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+# -------------------------
+# Color Recovery Module (CRM)
 # -------------------------
 class ColorRecoveryModule(nn.Module):
     def __init__(self, in_channels):
@@ -108,33 +120,33 @@ class ColorRecoveryModule(nn.Module):
         L = torch.clamp(L, 0, 1)
         output_features = []
         current_color = color_features
-        for i in range(3):  # Increased iterations to 3
+        for i in range(2):
             F_i = L * current_color + content_features
             output_features.append(F_i)
             current_color = self.conv1x1(F_i)
             current_color = F.relu(current_color)
         final_output = torch.mean(torch.stack(output_features), dim=0)
-        final_output = final_output + content_features  # Residual connection
         return final_output
 
 # -------------------------
-# Mynet with Enhanced CPGB
+# Mynet with CPGB
 # -------------------------
 class Mynet(nn.Module):
     def __init__(self):
         super(Mynet, self).__init__()
-        self.input = nn.Conv2d(3, 32, kernel_size=1, stride=1, bias=False)  # Increased channels
-        self.bn_input = nn.BatchNorm2d(32)
+        self.input = nn.Conv2d(3, 16, kernel_size=1, stride=1, bias=False)
+        self.bn_input = nn.BatchNorm2d(16)
         self.hs_input = nn.Hardswish()
 
-        self.block1 = ConvBlock(32, 64, stride=1)
-        self.block2 = ConvBlock(64, 128, stride=1)
-        self.block3 = ConvBlock(160, 64, stride=1, use_cbam=True)  # Adjusted channels
+        self.block1 = ConvBlock(16, 32, stride=1)
+        self.block2 = ConvBlock(32, 64, stride=1)
+        self.block3 = ConvBlock(80, 32, stride=1, use_cbam=True)
 
-        self.cpgb = CPGB(in_channels=3, out_channels=64)
-        self.crm = ColorRecoveryModule(in_channels=64)
+        self.color_extractor = ColorFeatureExtractor(in_channels=3, out_channels=32)
+        self.cpgb = CPGB(in_channels=3, out_channels=32)  # Added CPGB
+        self.crm = ColorRecoveryModule(in_channels=32)
 
-        self.output = nn.Conv2d(64, 3, kernel_size=1, stride=1)
+        self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)  # Corrected typo
         self.final_act = nn.Tanh()
 
     def forward(self, x, gt_color_source=None):
@@ -144,7 +156,8 @@ class Mynet(nn.Module):
             gt_color_source (Tensor or None): GT image to extract color features from (used only during training)
         """
         color_input = gt_color_source if gt_color_source is not None else x
-        color_features = self.cpgb(color_input)  # Extract color features using CPGB
+        color_features = self.color_extractor(color_input)
+        cpgb_prior = self.cpgb(color_input)  # Extract color priors using CPGB
 
         x = self.input(x)
         x = self.bn_input(x)
@@ -152,12 +165,13 @@ class Mynet(nn.Module):
 
         x = self.block1(x)
         x = self.block2(x)
-        x = torch.cat([x, torch.zeros_like(x)[:, :32, :, :]], dim=1)  # Pad to 160 channels
+        x = torch.cat([x, torch.zeros_like(x)[:, :16, :, :]], dim=1)  # pad to 80 channels
         content_features = self.block3(x)
 
         color_features = F.interpolate(color_features, size=content_features.shape[2:], mode='bilinear', align_corners=False)
+        cpgb_prior = F.interpolate(cpgb_prior, size=content_features.shape[2:], mode='bilinear', align_corners=False)
 
-        x = self.crm(content_features, color_features)
+        x = self.crm(content_features, color_features, cpgb_prior)
 
         x = self.output(x)
         x = self.final_act(x)
@@ -186,4 +200,4 @@ if __name__ == "__main__":
             print_per_layer_stat=False, verbose=False
         )
         print(f"\nFLOPs: {macs}")
-        print(f"Parameters: {params}")
+        print(f"Parameters: {params}") 
