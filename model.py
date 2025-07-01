@@ -17,13 +17,10 @@ class CPGB(nn.Module):
             nn.Conv2d(in_channels * reduction_ratio, in_channels * reduction_ratio // 2, kernel_size=1, stride=1, bias=False),
             nn.BatchNorm2d(in_channels * reduction_ratio // 2),
             nn.ReLU(),
-            nn.Conv2d(in_channels * reduction_ratio // 2, in_channels, kernel_size=1, stride=1, bias=False),
+            nn.Conv2d(in_channels * reduction_ratio // 2, in_channels, kernel_size=1, stride=1, bias=False),  # Ensure output matches in_channels
             nn.Tanh()
         )
         self.rir = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(in_channels),
-            nn.ReLU(),
             nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(in_channels),
             nn.ReLU(),
@@ -92,27 +89,6 @@ class ConvBlock(nn.Module):
         return x
 
 # -------------------------
-# Enhanced Color Feature Extractor
-# -------------------------
-class ColorFeatureExtractor(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super(ColorFeatureExtractor, self).__init__()
-        self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 16, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(16, 16, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(16),
-            nn.ReLU()
-        )
-        self.decoder = nn.Conv2d(16, out_channels, kernel_size=1, stride=1, bias=False)
-
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
-        return x
-
-# -------------------------
 # Enhanced Color Recovery Module (CRM)
 # -------------------------
 class ColorRecoveryModule(nn.Module):
@@ -155,7 +131,6 @@ class Mynet(nn.Module):
         self.block2 = ConvBlock(64, 128, stride=1)
         self.block3 = ConvBlock(160, 64, stride=1, use_cbam=True)  # Adjusted channels
 
-        self.color_extractor = ColorFeatureExtractor(in_channels=3, out_channels=64)
         self.cpgb = CPGB(in_channels=3, out_channels=64)
         self.crm = ColorRecoveryModule(in_channels=64)
 
@@ -169,8 +144,7 @@ class Mynet(nn.Module):
             gt_color_source (Tensor or None): GT image to extract color features from (used only during training)
         """
         color_input = gt_color_source if gt_color_source is not None else x
-        color_features = self.color_extractor(color_input)
-        cpgb_prior = self.cpgb(color_input)  # Extract color priors using CPGB
+        color_features = self.cpgb(color_input)  # Extract color features using CPGB
 
         x = self.input(x)
         x = self.bn_input(x)
@@ -182,9 +156,8 @@ class Mynet(nn.Module):
         content_features = self.block3(x)
 
         color_features = F.interpolate(color_features, size=content_features.shape[2:], mode='bilinear', align_corners=False)
-        cpgb_prior = F.interpolate(cpgb_prior, size=content_features.shape[2:], mode='bilinear', align_corners=False)
 
-        x = self.crm(content_features, color_features, cpgb_prior)
+        x = self.crm(content_features, color_features)
 
         x = self.output(x)
         x = self.final_act(x)
