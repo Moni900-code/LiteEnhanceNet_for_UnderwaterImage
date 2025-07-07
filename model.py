@@ -70,8 +70,8 @@ class Mynet(nn.Module):
         self.bn_input = nn.BatchNorm2d(16)
         self.hs_input = nn.Hardswish()
 
-        self.block1 = ConvBlock(16, 32, stride=1, use_cbam=True)
-        self.block2 = ConvBlock(32, 64, stride=1)
+        self.block1 = ConvBlock(16, 32, stride=1)
+        self.block2 = ConvBlock(32, 64, stride=1, use_cbam=True)
         self.block3 = ConvBlock(80, 32, stride=1)  # ✅ CBAM enabled here
 
         self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)
