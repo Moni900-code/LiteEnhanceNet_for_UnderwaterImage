@@ -36,7 +36,7 @@ class Mynet(nn.Module):
 
         self.block1 = ConvBlock(16, 32, stride=1)
         self.block2 = ConvBlock(32, 64, stride=1)
-        self.block3 = ConvBlock(64, 32, stride=1)
+        self.block3 = ConvBlock(80, 32, stride=1)  # ✅ expects 80-channel input
 
         self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)
         self.final_act = nn.Tanh()
@@ -48,6 +48,10 @@ class Mynet(nn.Module):
 
         x = self.block1(x)
         x = self.block2(x)
+
+        # ✅ Pad to 80 channels before passing to block3
+        x = torch.cat([x, torch.zeros_like(x)[:, :16, :, :]], dim=1)
+
         x = self.block3(x)
 
         x = self.output(x)
