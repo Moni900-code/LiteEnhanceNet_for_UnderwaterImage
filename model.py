@@ -10,33 +10,28 @@ from ptflops import get_model_complexity_info
 class CBAM(nn.Module):
     def __init__(self, in_channels, reduction_ratio=16):
         super(CBAM, self).__init__()
-        # Channel Attention
         self.channel_gate = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
-            nn.Conv2d(in_channels, in_channels // reduction_ratio, kernel_size=1, bias=False),
+            nn.Conv2d(in_channels, in_channels // reduction_ratio, kernel_size=1, stride=1, bias=False),
             nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels // reduction_ratio, in_channels, kernel_size=1, bias=False),
+            nn.Conv2d(in_channels // reduction_ratio, in_channels, kernel_size=1, stride=1, bias=False),
             nn.Hardsigmoid()
         )
-        # Spatial Attention
-        self.spatial_gate = nn.Conv2d(2, 1, kernel_size=7, padding=3, bias=False)
+        self.spatial_gate = nn.Conv2d(2, 1, kernel_size=7, stride=1, padding=3, bias=False)
 
     def forward(self, x):
-        # Channel Attention
         channel_att = self.channel_gate(x)
         x = x * channel_att
-
-        # Spatial Attention
         max_pool = torch.max(x, dim=1, keepdim=True)[0]
         avg_pool = torch.mean(x, dim=1, keepdim=True)
         spatial_input = torch.cat([max_pool, avg_pool], dim=1)
-        spatial_att = torch.sigmoid(self.spatial_gate(spatial_input))
+        spatial_att = self.spatial_gate(spatial_input)
+        spatial_att = torch.sigmoid(spatial_att)
         x = x * spatial_att
-
         return x
 
 # -------------------------
-# ConvBlock with optional CBAM
+# ConvBlock
 # -------------------------
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, use_cbam=False):
@@ -61,7 +56,25 @@ class ConvBlock(nn.Module):
         return x
 
 # -------------------------
-# Mynet (CBAM used in block3)
+# Lightweight Color Feature Extractor (for color histogram)
+# -------------------------
+class ColorFeatureExtractor(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(ColorFeatureExtractor, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 16, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.ReLU()
+        )
+        self.decoder = nn.Conv2d(16, out_channels, kernel_size=1, stride=1, bias=False)
+
+    def forward(self, x):
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x
+
+# -------------------------
+# Mynet with Normal Fusion (no CRM)
 # -------------------------
 class Mynet(nn.Module):
     def __init__(self):
@@ -69,33 +82,55 @@ class Mynet(nn.Module):
         self.input = nn.Conv2d(3, 16, kernel_size=1, stride=1, bias=False)
         self.bn_input = nn.BatchNorm2d(16)
         self.hs_input = nn.Hardswish()
-
+        
         self.block1 = ConvBlock(16, 32, stride=1)
         self.block2 = ConvBlock(32, 64, stride=1)
-        self.block3 = ConvBlock(80, 32, stride=1, use_cbam=True)  # ✅ CBAM enabled here
-
+        self.block3 = ConvBlock(80, 32, stride=1, use_cbam=True)
+        
+        # Lightweight color feature extractor
+        self.color_extractor = ColorFeatureExtractor(in_channels=3, out_channels=32)
+        
+        # Fusion conv: content(32) + color(32) = 64 -> 32 channels
+        self.fuse = nn.Conv2d(64, 32, kernel_size=1, stride=1, bias=False)
+        self.bn_fuse = nn.BatchNorm2d(32)
+        self.act_fuse = nn.Hardswish()
+        
         self.output = nn.Conv2d(32, 3, kernel_size=1, stride=1)
         self.final_act = nn.Tanh()
 
-    def forward(self, x):
+    def forward(self, x, gt_color_source=None):
+        """
+        Args:
+            x (Tensor): degraded input image
+            gt_color_source (Tensor or None): GT image for color feature (optional, fallback to x)
+        """
+        color_input = gt_color_source if gt_color_source is not None else x
+        color_features = self.color_extractor(color_input)
+        
         x = self.input(x)
         x = self.bn_input(x)
         x = self.hs_input(x)
-
+        
         x = self.block1(x)
         x = self.block2(x)
-
-        # Pad to 80 channels before passing to block3
-        x = torch.cat([x, torch.zeros_like(x)[:, :16, :, :]], dim=1)
-
-        x = self.block3(x)
-
-        x = self.output(x)
-        x = self.final_act(x)
-        return x
+        x = torch.cat([x, torch.zeros_like(x)[:, :16, :, :]], dim=1)  # pad to 80 channels
+        content_features = self.block3(x)  # [B, 32, H, W]
+        
+        # Resize color features to match content spatial size
+        color_features = F.interpolate(color_features, size=content_features.shape[2:], mode='bilinear', align_corners=False)
+        
+        # Normal fusion: concat and 1x1 conv
+        fused = torch.cat([content_features, color_features], dim=1)  # [B, 64, H, W]
+        fused = self.fuse(fused)
+        fused = self.bn_fuse(fused)
+        fused = self.act_fuse(fused)
+        
+        out = self.output(fused)
+        out = self.final_act(out)
+        return out
 
 # -------------------------
-# Summary + FLOPs
+# Main: Summary + FLOPs
 # -------------------------
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
